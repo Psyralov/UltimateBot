@@ -27,6 +27,7 @@ with open(
 TOKEN = config["BOT_TOKEN"]
 HOST_ROLE_ID = config["ESTUDIANTE_DEFINITIVO_ID"]
 VOICE_CATEGORY_ID = config["INGAME_CATEGORY_ID"]
+ADMIN_ID = config["ADMIN_ROLE_ID"]
 
 
 if not os.path.exists("partidas.json"):
@@ -66,6 +67,8 @@ IMAGEN_PARTIDA = (
     "fa0ffcc09e634f4ce9550198&=&format=webp"
 )
 
+JUGADORES_NECESARIOS = 2
+
 
 def guardar_partidas():
 
@@ -85,8 +88,31 @@ def guardar_partidas():
 
 def obtener_partida(message_id):
 
-    return partidas.get(
-        str(message_id)
+    message_id = str(message_id)
+
+    if message_id in partidas:
+        return partidas[message_id]
+    
+    for partida in partidas.values():
+
+        if str(partida.get("message_id")) == message_id:
+
+            return partida
+
+    return None
+
+
+
+def Es_Admin(usuario: discord.Member) -> bool:
+    if usuario.id == 387765989854543882:
+        return True
+
+    if usuario.guild_permissions.administrator:
+        return True
+
+    return any(
+        rol.id == ADMIN_ID
+        for rol in usuario.roles
     )
 
 
@@ -116,7 +142,7 @@ def generar_cuadro_jugadores(partida):
 
     cuadros = []
 
-    for i in range(16):
+    for i in range(JUGADORES_NECESARIOS):
 
         if i < cantidad:
 
@@ -161,16 +187,30 @@ def crear_embed_partida(partida):
             f"{partida['host_name']}"
         )
 
+    if partida.get("title", "").strip():
+
+        titulo = partida["title"].strip()
+
     cantidad = len(
         partida["jugadores"]
     )
 
     descripcion = (
-        f"{cantidad}/16 "
+        f"{cantidad}/{JUGADORES_NECESARIOS} "
         f":busts_in_silhouette:\n"
         f"{generar_cuadro_jugadores(partida)}\n\n"
         f"{generar_lista_jugadores(partida)}"
     )
+
+    if partida["extras"]:
+
+        descripcion += "\n**Extras:**\n"
+
+        for extra in partida["extras"]:
+
+            descripcion += (
+                f"<@{extra['user_id']}>\n"
+            )
 
     embed = discord.Embed(
         title=titulo,
@@ -218,14 +258,178 @@ def crear_embed_partida(partida):
     return embed
 
 
-async def crear_thread_privado(
+async def finalizar_partida_admin(
+    interaction,
+    partida
+):
+
+    guild = interaction.guild
+
+
+    if partida.get("estado") == "finalizada":
+
+        await interaction.response.send_message(
+            "Esta partida ya está finalizada.",
+            ephemeral=True
+        )
+
+        return
+
+
+    canal4 = guild.get_channel(
+        config["SETUP"]["canal4"]
+    )
+
+    if canal4 is None:
+
+        await interaction.response.send_message(
+            "No pude encontrar el canal de "
+            "partidas finalizadas.",
+            ephemeral=True
+        )
+
+        return
+
+    embed = crear_embed_partida(
+        partida
+    )
+
+    await canal4.send(
+        embed=embed
+    )
+
+    message_id = partida.get(
+        "message_id"
+    )
+
+    if message_id:
+
+        try:
+
+            mensaje = await guild.get_channel(
+                obtener_canal_partida(partida)
+            ).fetch_message(
+                message_id
+            )
+
+            await mensaje.delete()
+
+        except (
+            discord.NotFound,
+            discord.Forbidden,
+            discord.HTTPException,
+            AttributeError
+        ):
+
+            pass
+
+
+    thread_id = partida.get(
+        "thread_id"
+    )
+
+    if thread_id:
+
+        try:
+
+            thread = await guild.fetch_channel(
+                thread_id
+            )
+
+            if isinstance(
+                thread,
+                discord.Thread
+            ):
+
+                await thread.delete()
+
+        except (
+            discord.NotFound,
+            discord.Forbidden,
+            discord.HTTPException
+        ):
+
+            pass
+
+
+    voice_id = partida.get(
+        "voice_id"
+    )
+
+    if voice_id:
+
+        try:
+
+            canal_voz = guild.get_channel(
+                voice_id
+            )
+
+            if canal_voz is not None:
+
+                await canal_voz.delete(
+                    reason=(
+                        "Partida finalizada "
+                        "por administrador."
+                    )
+                )
+
+        except (
+            discord.NotFound,
+            discord.Forbidden,
+            discord.HTTPException
+        ):
+
+            pass
+
+
+    partida["estado"] = "finalizada"
+
+    guardar_partidas()
+
+
+    await interaction.response.send_message(
+        "La partida fue finalizada y enviada "
+        "al historial.",
+        ephemeral=True
+    )
+
+
+
+def obtener_canal_partida(partida):
+
+    estado = partida.get(
+        "estado"
+    )
+
+
+    if estado == "buscando":
+
+        return config["SETUP"]["canal2"]
+
+
+    if estado == "en_curso":
+
+        return config["SETUP"]["canal3"]
+
+
+    if estado == "organizada":
+
+        # Una partida programada todavía
+        # está en el canal 2.
+        return config["SETUP"]["canal2"]
+
+
+    return config["SETUP"]["canal2"]
+
+
+async def crear_thread(
     canal,
     nombre
 ):
 
     thread = await canal.create_thread(
         name=nombre,
-        type=discord.ChannelType.private_thread,
+        type=discord.ChannelType.public_thread,
         invitable=False
     )
 
@@ -369,6 +573,13 @@ class CrearPartidaModal(
     title="Crear partida"
 ):
 
+    titulo = discord.ui.TextInput(
+        label="Título de la partida",
+        placeholder="Opcional — deja vacío para usar el título predeterminado",
+        required=False,
+        max_length=100
+    )
+
     fecha_hora = discord.ui.TextInput(
         label="Fecha y hora (Vacío = partida Quick Play)",
         placeholder=(
@@ -407,36 +618,63 @@ class CrearPartidaModal(
 
         timestamp = None
 
-        if self.fecha_hora.value.strip():
+        fecha_hora_input = self.fecha_hora.value.strip()
 
-            try:
+        if fecha_hora_input:
 
-                fecha = datetime.strptime(
-                    self.fecha_hora.value.strip(),
-                    "%d/%m/%Y %H:%M"
-                )
+            if fecha_hora_input.startswith("<t:"):
 
-                fecha = fecha.replace(
-                    tzinfo=UNIVERSAL_TZ
-                )
+                try:
 
-                timestamp = int(
-                    fecha.timestamp()
-                )
+                    contenido = fecha_hora_input[3:]
 
-            except ValueError:
+                    timestamp_str = contenido.split(":")[0]
 
-                await interaction.response.send_message(
-                    "La fecha y hora no tienen "
-                    "un formato válido.\n\n"
-                    "Utiliza:\n"
-                    "`DD/MM/YYYY HH:MM`\n\n"
-                    "Ejemplo:\n"
-                    "`05/10/2026 21:30`",
-                    ephemeral=True
-                )
+                    timestamp = int(timestamp_str)
 
-                return
+                except (ValueError, IndexError):
+
+                    await interaction.response.send_message(
+                        "El timestamp de Discord no es válido.\n\n"
+                        "Ejemplo válido:\n"
+                        "`<t:1790899020:d>`",
+                        ephemeral=True
+                    )
+
+                    return
+
+            else:
+
+                try:
+
+                    fecha = datetime.strptime(
+                        fecha_hora_input,
+                        "%d/%m/%Y %H:%M"
+                    )
+
+                    fecha = fecha.replace(
+                        tzinfo=UNIVERSAL_TZ
+                    )
+
+                    timestamp = int(
+                        fecha.timestamp()
+                    )
+
+                except ValueError:
+
+                    await interaction.response.send_message(
+                        "La fecha y hora no tienen "
+                        "un formato válido.\n\n"
+                        "Puedes utilizar cualquiera "
+                        "de estos formatos:\n\n"
+                        "`DD/MM/YYYY HH:MM`\n"
+                        "Ejemplo: `05/10/2026 21:30`\n\n"
+                        "O un timestamp de Discord:\n"
+                        "`<t:1790899020:d>`",
+                        ephemeral=True
+                    )
+
+                    return
 
         canal2_id = config["SETUP"]["canal2"]
 
@@ -455,31 +693,26 @@ class CrearPartidaModal(
             return
 
         partida = {
-
             "guild_id": interaction.guild.id,
 
             "host_id": interaction.user.id,
 
-            "host_name": (
-                interaction.user.display_name
-            ),
+            "host_name": interaction.user.display_name,
+
+            "title": self.titulo.value.strip(),
 
             "timestamp": timestamp,
 
-            "reglas": (
-                self.reglas.value.strip()
-            ),
+            "reglas": self.reglas.value.strip(),
 
             "jugadores": [
-
                 {
                     "user_id": interaction.user.id,
-
-                    "personaje": (
-                        self.personaje.value.strip()
-                    )
+                    "personaje": self.personaje.value.strip()
                 }
             ],
+
+            "extras": [],
 
             "message_id": None,
 
@@ -503,7 +736,7 @@ class CrearPartidaModal(
             mensaje.id
         )
 
-        thread = await crear_thread_privado(
+        thread = await crear_thread(
             canal2,
             f"Partida - {interaction.user.display_name}"
         )
@@ -583,7 +816,7 @@ class ParticiparModal(
 
                 return
 
-        if len(jugadores) >= 16:
+        if len(jugadores) >= JUGADORES_NECESARIOS:
 
             await interaction.response.send_message(
                 "La partida ya está completa.",
@@ -613,7 +846,7 @@ class ParticiparModal(
             view=PartidaView()
         )
         #Comprobación de jugadores. Si hay 16, comienza.
-        if len(jugadores) == 16:
+        if len(jugadores) == JUGADORES_NECESARIOS:
 
             await finalizar_organizacion(
                 interaction.guild,
@@ -742,10 +975,7 @@ async def convertir_quick_play(
 
         try:
 
-            await thread_anterior.edit(
-                archived=True,
-                locked=True
-            )
+            await thread_anterior.delete()
 
         except discord.HTTPException:
 
@@ -769,7 +999,7 @@ async def convertir_quick_play(
         view=PartidaFinalizadaView()
     )
 
-    thread_nuevo = await crear_thread_privado(
+    thread_nuevo = await crear_thread(
         canal3,
         f"Ingame - {partida['host_name']}"
     )
@@ -901,7 +1131,7 @@ class PartidaView(
 
             return
 
-        if len(partida["jugadores"]) >= 16:
+        if len(partida["jugadores"]) >= JUGADORES_NECESARIOS:
 
             await interaction.response.send_message(
                 "La partida ya está completa.",
@@ -930,9 +1160,89 @@ class PartidaView(
         )
 
     @discord.ui.button(
-        label="Cancelar participación",
-        style=discord.ButtonStyle.danger,
-        custom_id="partida_cancelar"
+        label="Entrar como extra",
+        style=discord.ButtonStyle.secondary,
+        custom_id="partida_extra"
+    )
+    async def entrar_como_extra(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        partida = obtener_partida(
+            interaction.message.id
+        )
+
+        if partida is None:
+
+            await interaction.response.send_message(
+                "Esta partida ya no está disponible.",
+                ephemeral=True
+            )
+
+            return
+
+
+        for jugador in partida["jugadores"]:
+
+            if (
+                jugador["user_id"]
+                == interaction.user.id
+            ):
+
+                await interaction.response.send_message(
+                    "Ya formas parte de los jugadores "
+                    "de esta partida.",
+                    ephemeral=True
+                )
+
+                return
+
+
+        for extra in partida["extras"]:
+
+            if (
+                extra["user_id"]
+                == interaction.user.id
+            ):
+
+                await interaction.response.send_message(
+                    "Ya estás registrado como extra "
+                    "en esta partida.",
+                    ephemeral=True
+                )
+
+                return
+
+        partida["extras"].append(
+            {
+                "user_id": interaction.user.id
+            }
+        )
+
+        guardar_partidas()
+
+
+        embed = crear_embed_partida(
+            partida
+        )
+
+        await interaction.message.edit(
+            embed=embed,
+            view=PartidaView()
+        )
+
+        await interaction.response.send_message(
+            "Te has registrado como extra "
+            "para esta partida.",
+            ephemeral=True
+        )
+
+    @discord.ui.button(
+    label="Cancelar participación",
+    style=discord.ButtonStyle.danger,
+    custom_id="partida_cancelar"
     )
     async def cancelar(
         self,
@@ -953,6 +1263,7 @@ class PartidaView(
 
             return
 
+
         jugador_encontrado = None
 
         for jugador in partida["jugadores"]:
@@ -965,34 +1276,86 @@ class PartidaView(
                 jugador_encontrado = jugador
                 break
 
-        if jugador_encontrado is None:
+        if jugador_encontrado is not None:
+
+            if (
+                interaction.user.id
+                == partida["host_id"]
+            ):
+
+                await interaction.response.send_message(
+                    "El anfitrión no puede cancelar "
+                    "su propia participación.",
+                    ephemeral=True
+                )
+
+                return
+
+            partida["jugadores"].remove(
+                jugador_encontrado
+            )
+
+            guardar_partidas()
+
+            embed = crear_embed_partida(
+                partida
+            )
+
+            await interaction.message.edit(
+                embed=embed,
+                view=PartidaView()
+            )
 
             await interaction.response.send_message(
-                "No estás participando "
-                "en esta partida.",
+                "Has cancelado tu participación "
+                "en la partida.",
                 ephemeral=True
             )
 
             return
 
-        partida["jugadores"].remove(
-            jugador_encontrado
-        )
 
-        guardar_partidas()
+        extra_encontrado = None
 
-        embed = crear_embed_partida(
-            partida
-        )
+        for extra in partida["extras"]:
 
-        await interaction.message.edit(
-            embed=embed,
-            view=PartidaView()
-        )
+            if (
+                extra["user_id"]
+                == interaction.user.id
+            ):
+
+                extra_encontrado = extra
+                break
+
+        if extra_encontrado is not None:
+
+            partida["extras"].remove(
+                extra_encontrado
+            )
+
+            guardar_partidas()
+
+            embed = crear_embed_partida(
+                partida
+            )
+
+            await interaction.message.edit(
+                embed=embed,
+                view=PartidaView()
+            )
+
+            await interaction.response.send_message(
+                "Has dejado de estar registrado "
+                "como extra.",
+                ephemeral=True
+            )
+
+            return
+
 
         await interaction.response.send_message(
-            "Has cancelado tu participación "
-            "en la partida.",
+            "No estás participando ni estás "
+            "registrado como extra en esta partida.",
             ephemeral=True
         )
 
@@ -1017,6 +1380,10 @@ class PartidaFinalizadaView(
         interaction: discord.Interaction,
         button: discord.ui.Button
     ):
+        await interaction.response.send_message(
+                    "Intentando finalizar tu partida...",
+                    ephemeral=True
+                )
 
         partida = obtener_partida(
             interaction.message.id
@@ -1032,13 +1399,12 @@ class PartidaFinalizadaView(
             return
 
         if (
-            interaction.user.id
-            != partida["host_id"]
+            interaction.user.id != partida["host_id"]
+            and not Es_Admin(interaction.user)
         ):
-
             await interaction.response.send_message(
                 "Solo el anfitrión de la partida "
-                "puede finalizarla.",
+                "o un admin pueden finalizar la partida.",
                 ephemeral=True
             )
 
@@ -1080,10 +1446,7 @@ class PartidaFinalizadaView(
                     partida["thread_id"]
                 )
 
-                await thread.edit(
-                    archived=True,
-                    locked=True
-                )
+                await thread.delete()
 
             except discord.HTTPException:
 
@@ -1109,16 +1472,11 @@ class PartidaFinalizadaView(
 
         guardar_partidas()
 
-        await interaction.response.send_message(
-            "La partida fue archivada correctamente.",
-            ephemeral=True
-        )
-
 
 
 @client.tree.command(
     name="agregar",
-    description="Agrega un usuario a la partida."
+    description="Agrega un usuario a la partida.(HOST)"
 )
 @app_commands.describe(
     usuario="Usuario que quieres agregar"
@@ -1228,10 +1586,67 @@ async def agregar(
     )
 
 
+@client.tree.command(
+    name="finalizar_partida",
+    description="Finaliza y archiva una partida.(ADMIN)"
+)
+@app_commands.describe(
+    message_id="ID del mensaje de la partida."
+)
+async def finalizar_partida(
+    interaction: discord.Interaction,
+    message_id: str
+):
+
+
+    if not Es_Admin(interaction.user):
+
+        await interaction.response.send_message(
+            "No tienes permisos para utilizar "
+            "este comando.",
+            ephemeral=True
+        )
+
+        return
+
+
+    try:
+
+        message_id_int = int(message_id)
+
+    except ValueError:
+
+        await interaction.response.send_message(
+            "El Message ID proporcionado no es válido.",
+            ephemeral=True
+        )
+
+        return
+
+
+    partida = partidas.get(
+        str(message_id_int)
+    )
+
+    if partida is None:
+
+        await interaction.response.send_message(
+            "No encontré ninguna partida registrada "
+            "con ese Message ID.",
+            ephemeral=True
+        )
+
+        return
+
+    await finalizar_partida_admin(
+        interaction,
+        partida
+    )
+
 
 @client.tree.command(
     name="eliminar",
-    description="Expulsa un usuario de la partida."
+    description="Expulsa un usuario de la partida.(HOST)"
 )
 @app_commands.describe(
     usuario="Usuario que quieres expulsar"
@@ -1357,7 +1772,7 @@ async def eliminar(
 
 @client.tree.command(
     name="setup",
-    description="Configura los canales del sistema."
+    description="Configura los canales del sistema.(ADMIN)"
 )
 @app_commands.describe(
     canal1="ID del canal principal",
@@ -1372,6 +1787,16 @@ async def setup(
     canal3: str,
     canal4: str
 ):
+
+    if not Es_Admin(interaction.user):
+
+            await interaction.response.send_message(
+                "No tienes permisos para utilizar "
+                "este comando.",
+                ephemeral=True
+            )
+
+            return
 
     try:
 
