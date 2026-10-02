@@ -88,15 +88,11 @@ def guardar_partidas():
 
 def obtener_partida(message_id):
 
-    message_id = str(message_id)
+    message_id = int(message_id)
 
-    if message_id in partidas:
-        return partidas[message_id]
-    
     for partida in partidas.values():
 
-        if str(partida.get("message_id")) == message_id:
-
+        if partida.get("message_id") == message_id:
             return partida
 
     return None
@@ -386,12 +382,6 @@ async def finalizar_partida_admin(
     guardar_partidas()
 
 
-    await interaction.response.send_message(
-        "La partida fue finalizada y enviada "
-        "al historial.",
-        ephemeral=True
-    )
-
 
 
 def obtener_canal_partida(partida):
@@ -583,7 +573,7 @@ class CrearPartidaModal(
         label="Fecha y hora (Vacío = partida Quick Play)",
         placeholder=(
             "DD/MM/YYYY HH:MM (Hora UTC) "
-            "— vacío = Quick Play"
+            "— <t:??????????:F>"
         ),
         required=False,
         max_length=16
@@ -1379,10 +1369,6 @@ class PartidaFinalizadaView(
         interaction: discord.Interaction,
         button: discord.ui.Button
     ):
-        await interaction.response.send_message(
-                    "Intentando finalizar tu partida...",
-                    ephemeral=True
-                )
 
         partida = obtener_partida(
             interaction.message.id
@@ -1409,6 +1395,13 @@ class PartidaFinalizadaView(
 
             return
 
+        
+        await interaction.response.send_message(
+                    "Intentando finalizar tu partida...",
+                    ephemeral=True
+                )
+
+        
         canal4 = interaction.guild.get_channel(
             config["SETUP"]["canal4"]
         )
@@ -1622,10 +1615,13 @@ async def finalizar_partida(
 
         return
 
+    await interaction.response.send_message(
+                "Intentando finalizar la partida...",
+                ephemeral=True
+            )
 
-    partida = partidas.get(
-        str(message_id_int)
-    )
+
+    partida = obtener_partida(message_id)
 
     if partida is None:
 
