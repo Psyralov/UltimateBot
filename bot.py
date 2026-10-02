@@ -67,7 +67,7 @@ IMAGEN_PARTIDA = (
     "fa0ffcc09e634f4ce9550198&=&format=webp"
 )
 
-JUGADORES_NECESARIOS = 2
+JUGADORES_NECESARIOS = 16
 
 
 def guardar_partidas():
@@ -247,13 +247,12 @@ def crear_embed_partida(partida):
         url=IMAGEN_PARTIDA
     )
 
-    if es_quick_play:
-        embed.set_footer(
-            text=(
-                "La batalla entre desesperación y "
-                "esperanza comenzará en breve..."
-            )
+
+    embed.set_footer(
+        text=(
+            f"- {partida['host_name']}"
         )
+    )
 
     return embed
 
