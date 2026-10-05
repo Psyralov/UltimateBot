@@ -1889,14 +1889,14 @@ async def bump(
         )
 
         return
-
-    partida_activa = any(
-        partida.get("guild_id") == interaction.guild_id
-        and partida.get("host_id") == interaction.user.id
-        and partida.get("estado") == "buscando"
-        for partida in partidas.values()
-    )
 #TODO: CUANDO EL BOT SEA LA ÚNICA VIA PARA BUSCAR PARTIDAS, REACTIVAR ESTA OPCIÓN.
+#    partida_activa = any(
+#        partida.get("guild_id") == interaction.guild_id
+#        and partida.get("host_id") == interaction.user.id
+#        and partida.get("estado") == "buscando"
+#        for partida in partidas.values()
+#    )
+
 #    if not partida_activa:
 #
 #        await interaction.response.send_message(
