@@ -1472,6 +1472,75 @@ class PartidaFinalizadaView(
 
 
 @client.tree.command(
+    name="help",
+    description="Muestra cómo usar los comandos del bot."
+)
+async def help_command(
+    interaction: discord.Interaction
+):
+
+    embed = discord.Embed(
+        title="Ayuda del bot",
+        description=(
+            "Usa los siguientes comandos para gestionar "
+            "partidas. Los comandos de HOST se usan "
+            "dentro del canal de voz de la partida."
+        ),
+        color=discord.Color.blue()
+    )
+    embed.add_field(
+        name="/agregar usuario:<usuario> (SOLO HOST)",
+        value=(
+            "Añade un usuario a la partida del canal de voz "
+            "actual. Solo puede usarlo el anfitrión."
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="/eliminar usuario:<usuario> (SOLO HOST)",
+        value=(
+            "Quita a un participante de la partida del canal "
+            "de voz actual. Solo puede usarlo el anfitrión."
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="/finalizar_partida message_id:<ID> (SOLO ADMINS)",
+        value=(
+            "Fuerza la finalización y archiva la partida cuyo mensaje tenga "
+            "el ID. Requiere permisos de administrador."
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="/bump [mensaje:<texto>] (PLANEADO PARA HOSTS)",
+        value=(
+            "Notifica a los jugadores para que revisen las "
+            "partidas en búsqueda. El mensaje es opcional; "
+            "puedes usarlo para incluir texto personalizado. "
+            "Tiene un tiempo de espera de 60 minutos por usuario."
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="Crear y participar en partidas",
+        value=(
+            "En el canal de partidas, usa **Crear partida** y "
+            "completa el formulario. En una publicación de "
+            "partida, **Participar** te une, **Entrar como extra** "
+            "te registra como suplente y **Cancelar participación** "
+            "te quita de la lista sin importar cómo te hayas registrado."
+        ),
+        inline=False
+    )
+
+    await interaction.response.send_message(
+        embed=embed,
+        ephemeral=True
+    )
+
+
+@client.tree.command(
     name="agregar",
     description="Agrega un usuario a la partida.(HOST)"
 )
@@ -2036,6 +2105,12 @@ async def on_ready():
 
     print(
         f"Conectado como {client.user}"
+    )
+
+    await client.change_presence(
+        activity=discord.Game(
+            name="Escribe /help"
+        )
     )
 
     client.add_view(
