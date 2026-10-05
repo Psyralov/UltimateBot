@@ -903,8 +903,8 @@ async def finalizar_organizacion(
         if thread is not None:
 
             await thread.send(
-                f"{generar_ping_jugadores(partida)}\n\n"
                 "Se han encontrado a los 16 participantes. ¡La partida está completamente organizada!"
+                f"{generar_ping_jugadores(partida)}\n\n"
             )
 
         canal2 = guild.get_channel(
@@ -1754,7 +1754,7 @@ async def eliminar(
 
         await interaction.response.send_message(
             "Este canal de voz no está asociado "
-            "a ninguna partida.",
+            "a ninguna partida. Asegurate de que sea un canal 'ingame' creado por el bot.",
             ephemeral=True
         )
 
