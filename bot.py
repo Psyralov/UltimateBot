@@ -1876,8 +1876,12 @@ async def setup(
     name="bump",
     description="Notifica a los jugadores de una partida en búsqueda."
 )
+@app_commands.describe(
+    mensaje="Mensaje personalizado para la notificación."
+)
 async def bump(
-    interaction: discord.Interaction
+    interaction: discord.Interaction,
+    mensaje: str | None = None
 ):
 
     if interaction.guild is None:
@@ -1973,14 +1977,33 @@ async def bump(
 
     try:
 
-        await canal.send(
-            f"El usuario <@{interaction.user.id}> ha usado /bump para avisar que <@&{BUMP_ROLE_ID}>. ¡Échale un vistazo a su partida en <#1527880398837780610> / <#1555600674253701262>!",
-            allowed_mentions=discord.AllowedMentions(
-                roles=[discord.Object(id=BUMP_ROLE_ID)],
-                users=False,
-                everyone=False
-            )
+        allowed_mentions = discord.AllowedMentions(
+            roles=[discord.Object(id=BUMP_ROLE_ID)],
+            users=False,
+            everyone=False
         )
+
+        if mensaje is None:
+
+            await canal.send(
+                f"El usuario <@{interaction.user.id}> ha usado /bump para avisar que <@&{BUMP_ROLE_ID}>. ¡Échale un vistazo a su partida en <#1527880398837780610> / <#1555600674253701262>!",
+                allowed_mentions=allowed_mentions
+            )
+
+        else:
+
+            embed = discord.Embed(
+                title="¡Atención!",
+                color=discord.Color.from_str( "#f7ac20"),
+                description=mensaje,
+            )
+            embed.set_footer(text=(f"Notificado por {interaction.user.display_name}"))
+
+            await canal.send(
+                content=f"<@&{BUMP_ROLE_ID}>",
+                embed=embed,
+                allowed_mentions=allowed_mentions
+            )
 
     except discord.HTTPException:
 
