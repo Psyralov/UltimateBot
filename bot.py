@@ -4,6 +4,7 @@ from discord import app_commands
 
 import json
 import os
+import time
 
 from datetime import datetime, timezone
 
@@ -68,6 +69,10 @@ IMAGEN_PARTIDA = (
 )
 
 JUGADORES_NECESARIOS = 16
+BUMP_ROLE_ID = config["BUMP_ROLE_ID"]
+BUMP_CHANNEL_ID = config["BUMP_CHANNEL_ID"]
+BUMP_COOLDOWN_SECONDS = 60 * 60
+bump_cooldowns = {}
 
 
 def guardar_partidas():
@@ -1863,6 +1868,135 @@ async def setup(
 
     await interaction.response.send_message(
         "El sistema fue configurado correctamente.",
+        ephemeral=True
+    )
+
+
+@client.tree.command(
+    name="bump",
+    description="Notifica a los jugadores de una partida en búsqueda."
+)
+async def bump(
+    interaction: discord.Interaction
+):
+
+    if interaction.guild is None:
+
+        await interaction.response.send_message(
+            "Este comando solo puede utilizarse "
+            "dentro de un servidor.",
+            ephemeral=True
+        )
+
+        return
+
+    partida_activa = any(
+        partida.get("guild_id") == interaction.guild_id
+        and partida.get("host_id") == interaction.user.id
+        and partida.get("estado") == "buscando"
+        for partida in partidas.values()
+    )
+#TODO: CUANDO EL BOT SEA LA ÚNICA VIA PARA BUSCAR PARTIDAS, REACTIVAR ESTA OPCIÓN.
+#    if not partida_activa:
+#
+#        await interaction.response.send_message(
+#            "Solo el anfitrión de una partida que está "
+#            "buscando jugadores puede utilizar este comando.",
+#            ephemeral=True
+#        )
+#
+#        return
+
+    ahora = time.monotonic()
+    ultimo_bump = bump_cooldowns.get(interaction.user.id)
+
+    if ultimo_bump is not None:
+
+        restante = BUMP_COOLDOWN_SECONDS - (
+            ahora - ultimo_bump
+        )
+
+        if restante > 0:
+
+            segundos = int(restante) + 1
+            minutos, segundos = divmod(segundos, 60)
+
+            await interaction.response.send_message(
+                "Debes esperar "
+                f"**{minutos} min {segundos} s** "
+                "antes de volver a usar `/bump`.",
+                ephemeral=True
+            )
+
+            return
+
+    await interaction.response.defer(
+        ephemeral=True
+    )
+
+    canal = interaction.guild.get_channel(
+        BUMP_CHANNEL_ID
+    )
+
+    if canal is None:
+
+        try:
+
+            canal = await interaction.guild.fetch_channel(
+                BUMP_CHANNEL_ID
+            )
+
+        except discord.HTTPException:
+
+            await interaction.followup.send(
+                "No pude encontrar el canal donde se envían "
+                "las notificaciones.",
+                ephemeral=True
+            )
+
+            return
+
+    if not isinstance(
+        canal,
+        (discord.TextChannel, discord.Thread)
+    ):
+
+        await interaction.followup.send(
+            "El canal configurado para las notificaciones "
+            "no es un canal de texto válido.",
+            ephemeral=True
+        )
+
+        return
+
+    bump_cooldowns[interaction.user.id] = ahora
+
+    try:
+
+        await canal.send(
+            f"El usuario <@{interaction.user.id}> ha usado /bump para avisar que <@&{BUMP_ROLE_ID}>. ¡Échale un vistazo a su partida en <#1527880398837780610> / <#1555600674253701262>!",
+            allowed_mentions=discord.AllowedMentions(
+                roles=[discord.Object(id=BUMP_ROLE_ID)],
+                users=False,
+                everyone=False
+            )
+        )
+
+    except discord.HTTPException:
+
+        if bump_cooldowns.get(interaction.user.id) == ahora:
+            del bump_cooldowns[interaction.user.id]
+
+        await interaction.followup.send(
+            "No pude enviar la notificación. "
+            "Comprueba que tengo permisos en ese canal.",
+            ephemeral=True
+        )
+
+        return
+
+    await interaction.followup.send(
+        "Notificación enviada correctamente.",
         ephemeral=True
     )
 
