@@ -609,6 +609,7 @@ class CrearPartidaModal(
         self,
         interaction: discord.Interaction
     ):
+        await interaction.response.defer()
 
         timestamp = None
 
@@ -750,10 +751,56 @@ class CrearPartidaModal(
 
         guardar_partidas()
 
-        await interaction.response.send_message(
-            "Tu partida fue creada correctamente.",
-            ephemeral=True
+        bump_channel = interaction.guild.get_channel(
+            BUMP_CHANNEL_ID
         )
+
+        if bump_channel is None:
+
+            try:
+
+                bump_channel = await interaction.guild.fetch_channel(
+                    BUMP_CHANNEL_ID
+                )
+
+            except discord.HTTPException:
+
+                bump_channel = None
+
+        if isinstance(
+            bump_channel,
+            (discord.TextChannel, discord.Thread)
+        ):
+
+            try:
+
+                await bump_channel.send(
+                    f"¡Se ha iniciado una [nueva partida]({mensaje.jump_url})! Ve al canal <#{canal2_id}> para unirte."
+                )
+
+            except discord.HTTPException:
+
+                await interaction.response.send_message(
+                    "Tu partida fue creada correctamente, pero no pude "
+                    "publicar el aviso en el canal BUMP. "
+                    f"[Ver partida]({mensaje.jump_url})",
+                    ephemeral=True
+                )
+
+                return
+
+        else:
+
+            await interaction.response.send_message(
+                "Tu partida fue creada correctamente, pero no pude "
+                "encontrar un canal BUMP válido. "
+                f"[Ver partida]({mensaje.jump_url})",
+                ephemeral=True
+            )
+
+            return
+
+        await interaction.followup.send("Tu partida fue creada correctamente.", ephemeral=True)
 
 
 
