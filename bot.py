@@ -71,6 +71,7 @@ IMAGEN_PARTIDA = (
 JUGADORES_NECESARIOS = 16
 BUMP_ROLE_ID = config["BUMP_ROLE_ID"]
 BUMP_CHANNEL_ID = config["BUMP_CHANNEL_ID"]
+GENERAL_CHANNEL_ID = config["GENERAL_CHANNEL_ID"]
 BUMP_COOLDOWN_SECONDS = 60 * 60
 bump_cooldowns = {}
 
@@ -101,6 +102,147 @@ def obtener_partida(message_id):
             return partida
 
     return None
+
+
+def obtener_partida_del_contexto(interaction):
+
+    if interaction.guild is None:
+        return None
+
+    for partida in partidas.values():
+
+        if (
+            partida.get("guild_id") == interaction.guild.id
+            and partida.get("estado") in ("buscando", "en_curso")
+            and interaction.channel_id in (
+                partida.get("thread_id"),
+                partida.get("voice_id")
+            )
+        ):
+            return partida
+
+    return None
+
+
+async def resolver_jugador(guild, consulta):
+
+    consulta = consulta.strip()
+
+    if not consulta:
+        return None, "Indica un ID, nombre de usuario o nombre visible."
+
+    identificador = consulta
+
+    if consulta.startswith("<@") and consulta.endswith(">"):
+        identificador = consulta[2:-1].lstrip("!")
+
+    if identificador.isdigit():
+
+        usuario = guild.get_member(int(identificador))
+
+        if usuario is not None:
+            return usuario, None
+
+        try:
+            return await guild.fetch_member(int(identificador)), None
+
+        except discord.NotFound:
+            return None, "No encontré a ningún miembro con ese ID."
+        except discord.HTTPException:
+            return None, "No pude consultar ese ID en Discord. Inténtalo de nuevo."
+
+    consulta_normalizada = consulta.casefold()
+    coincidencias = [
+        miembro
+        for miembro in guild.members
+        if consulta_normalizada in {
+            miembro.name.casefold(),
+            miembro.display_name.casefold(),
+            (miembro.global_name or "").casefold()
+        }
+    ]
+
+    if len(coincidencias) == 1:
+        return coincidencias[0], None
+
+    if len(coincidencias) > 1:
+        return (
+            None,
+            "Hay varios miembros con ese nombre. "
+            "Usa su ID o mención para identificarlo sin ambigüedad."
+        )
+
+    return (
+        None,
+        "No encontré a ningún miembro con ese nombre. "
+        "Puedes usar su ID, nombre de usuario o nombre visible."
+    )
+
+
+async def sincronizar_jugador_partida(
+    guild,
+    partida,
+    usuario,
+    agregar
+):
+
+    errores = []
+
+    if partida.get("estado") == "en_curso" and partida.get("voice_id"):
+
+        canal_voz = guild.get_channel(partida["voice_id"])
+
+        if canal_voz is None:
+            errores.append("no se encontró el canal de voz")
+        else:
+            try:
+                if agregar:
+                    await canal_voz.set_permissions(
+                        usuario,
+                        connect=True,
+                        view_channel=True
+                    )
+                else:
+                    await canal_voz.set_permissions(
+                        usuario,
+                        overwrite=None
+                    )
+            except discord.HTTPException:
+                errores.append("no se actualizaron los permisos de voz")
+
+    if partida.get("thread_id"):
+
+        try:
+            thread = await guild.fetch_channel(partida["thread_id"])
+
+            if agregar:
+                await thread.add_user(usuario)
+            else:
+                await thread.remove_user(usuario)
+
+        except discord.HTTPException:
+            errores.append("no se actualizó el hilo de la partida")
+
+    canal_id = obtener_canal_partida(partida)
+    canal = guild.get_channel(canal_id)
+
+    if canal is None:
+        errores.append("no se encontró el canal de publicación")
+    else:
+        try:
+            mensaje = await canal.fetch_message(partida["message_id"])
+            await mensaje.edit(
+                embed=crear_embed_partida(partida),
+                view=(
+                    PartidaFinalizadaView()
+                    if partida.get("estado") == "en_curso"
+                    else PartidaView()
+                )
+            )
+        except discord.HTTPException:
+            errores.append("no se pudo actualizar la publicación de la partida")
+
+    return errores
 
 
 
@@ -251,7 +393,7 @@ def crear_embed_partida(partida):
 
     embed.set_footer(
         text=(
-            f"- {partida['host_name']}"
+            f"Host: {partida['host_name']}"
         )
     )
 
@@ -1536,10 +1678,27 @@ async def help_command(
         color=discord.Color.blue()
     )
     embed.add_field(
+        name="/enlistar jugador:<ID, usuario o nombre visible> (SOLO HOST)",
+        value=(
+            "Añade un jugador desde el hilo o canal de voz de la partida. "
+            "Disponible mientras está buscando jugadores o en curso."
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="/desenlistar jugador:<ID, usuario o nombre visible> (SOLO HOST)",
+        value=(
+            "Quita un jugador desde el hilo o canal de voz de la partida. "
+            "Disponible mientras está buscando jugadores o en curso."
+        ),
+        inline=False
+    )
+    embed.add_field(
         name="/agregar usuario:<usuario> (SOLO HOST)",
         value=(
-            "Añade un usuario a la partida del canal de voz "
-            "actual. Solo puede usarlo el anfitrión."
+            "Añade un usuario desde el canal de voz actual. "
+            "Para gestionar la lista desde el hilo durante la búsqueda, "
+            "usa /enlistar."
         ),
         inline=False
     )
@@ -1885,6 +2044,196 @@ async def eliminar(
     )
 
 
+@client.tree.command(
+    name="enlistar",
+    description="Añade un jugador a la lista tu partida.(HOST)"
+)
+@app_commands.describe(
+    jugador="ID, nombre de usuario, nombre visible o mención"
+)
+async def enlistar(
+    interaction: discord.Interaction,
+    jugador: str
+):
+
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "Este comando solo puede utilizarse dentro del servidor.",
+            ephemeral=True
+        )
+        return
+
+    partida = obtener_partida_del_contexto(interaction)
+
+    if partida is None:
+        await interaction.response.send_message(
+            "Usa este comando dentro del hilo o canal de voz "
+            "de una partida que esté buscando jugadores o en curso.",
+            ephemeral=True
+        )
+        return
+
+    if interaction.user.id != partida["host_id"]:
+        await interaction.response.send_message(
+            "Solo el anfitrión de esta partida puede utilizar "
+            "este comando.",
+            ephemeral=True
+        )
+        return
+
+    if len(partida["jugadores"]) >= JUGADORES_NECESARIOS:
+        await interaction.response.send_message(
+            "La partida ya tiene el máximo de jugadores.",
+            ephemeral=True
+        )
+        return
+
+    usuario, error = await resolver_jugador(
+        interaction.guild,
+        jugador
+    )
+
+    if error is not None:
+        await interaction.response.send_message(error, ephemeral=True)
+        return
+
+    if any(
+        participante["user_id"] == usuario.id
+        for participante in partida["jugadores"]
+    ):
+        await interaction.response.send_message(
+            "Ese usuario ya forma parte de la partida.",
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.defer()
+
+    partida["extras"] = [
+        extra
+        for extra in partida["extras"]
+        if extra["user_id"] != usuario.id
+    ]
+    partida["jugadores"].append(
+        {
+            "user_id": usuario.id,
+            "personaje": "Invitado por host"
+        }
+    )
+
+    guardar_partidas()
+
+    errores = await sincronizar_jugador_partida(
+        interaction.guild,
+        partida,
+        usuario,
+        agregar=True
+    )
+    respuesta = f"{usuario.mention} ha sido añadido a la partida."
+
+    if errores:
+        respuesta += (
+            "\nLa lista se actualizó, pero " + "; ".join(errores) + "."
+        )
+
+    await interaction.followup.send(respuesta, ephemeral=True)
+
+    if partida["estado"] == "buscando" and len(
+        partida["jugadores"]
+    ) == JUGADORES_NECESARIOS:
+        await finalizar_organizacion(interaction.guild, partida)
+
+
+@client.tree.command(
+    name="desenlistar",
+    description="Quita un jugador de la lista de tu partida.(HOST)"
+)
+@app_commands.describe(
+    jugador="ID, nombre de usuario, nombre visible o mención"
+)
+async def desenlistar(
+    interaction: discord.Interaction,
+    jugador: str
+):
+
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "Este comando solo puede utilizarse dentro del servidor.",
+            ephemeral=True
+        )
+        return
+
+    partida = obtener_partida_del_contexto(interaction)
+
+    if partida is None:
+        await interaction.response.send_message(
+            "Usa este comando dentro del hilo o canal de voz "
+            "de una partida que esté buscando jugadores o en curso.",
+            ephemeral=True
+        )
+        return
+
+    if interaction.user.id != partida["host_id"]:
+        await interaction.response.send_message(
+            "Solo el anfitrión de esta partida puede utilizar "
+            "este comando.",
+            ephemeral=True
+        )
+        return
+
+    usuario, error = await resolver_jugador(
+        interaction.guild,
+        jugador
+    )
+
+    if error is not None:
+        await interaction.response.send_message(error, ephemeral=True)
+        return
+
+    if usuario.id == partida["host_id"]:
+        await interaction.response.send_message(
+            "El anfitrión no puede ser eliminado de su propia partida.",
+            ephemeral=True
+        )
+        return
+
+    participante = next(
+        (
+            miembro
+            for miembro in partida["jugadores"]
+            if miembro["user_id"] == usuario.id
+        ),
+        None
+    )
+
+    if participante is None:
+        await interaction.response.send_message(
+            "Ese usuario no forma parte de la partida.",
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.defer()
+
+    partida["jugadores"].remove(participante)
+    guardar_partidas()
+
+    errores = await sincronizar_jugador_partida(
+        interaction.guild,
+        partida,
+        usuario,
+        agregar=False
+    )
+
+    respuesta = f"{usuario.mention} ha sido quitado de la partida."
+
+    if errores:
+        respuesta += (
+            "\nLa lista se actualizó, pero " + "; ".join(errores) + "."
+        )
+
+    await interaction.followup.send(respuesta, ephemeral=True)
+
 
 @client.tree.command(
     name="setup",
@@ -2140,6 +2489,110 @@ async def bump(
     )
 
 
+
+@client.tree.command(
+    name="devtalk",
+    description="Devtalk. (DEV)"
+)
+@app_commands.describe(
+    mensaje="..."
+)
+async def devtalk(
+    interaction: discord.Interaction,
+    mensaje: str
+):
+
+    if interaction.guild is None:
+
+        await interaction.response.send_message(
+            "Este comando solo puede utilizarse "
+            "dentro de un servidor.",
+            ephemeral=True
+        )
+
+        return
+
+    if interaction.user.id != 387765989854543882:
+
+        await interaction.response.send_message(
+            "No tienes permiso para utilizar este comando.",
+            ephemeral=True
+        )
+
+        return
+
+    await interaction.response.defer(
+        ephemeral=True
+    )
+
+    canal = interaction.guild.get_channel(
+        GENERAL_CHANNEL_ID
+    )
+
+    if canal is None:
+
+        try:
+
+            canal = await interaction.guild.fetch_channel(
+                GENERAL_CHANNEL_ID
+            )
+
+        except discord.HTTPException:
+
+            await interaction.followup.send(
+                "No pude encontrar el canal general.",
+                ephemeral=True
+            )
+
+            return
+
+    if not isinstance(
+        canal,
+        (discord.TextChannel, discord.Thread)
+    ):
+
+        await interaction.followup.send(
+            "El canal configurado como general "
+            "no es un canal de texto válido.",
+            ephemeral=True
+        )
+
+        return
+
+    try:
+
+        embed = discord.Embed(
+            title="Mensaje del desarrollador",
+            description=mensaje,
+            color=discord.Color.from_str("#afff58")
+        )
+
+        embed.set_footer(
+            text="Hablar con Psyra para presentar consultas o errores."
+        )
+
+        embed.set_thumbnail(
+            url=interaction.user.display_avatar.url
+        )
+
+        await canal.send(
+            embed=embed
+        )
+
+    except discord.HTTPException:
+
+        await interaction.followup.send(
+            "No pude enviar el mensaje. "
+            "Comprueba que tengo permisos en el canal general.",
+            ephemeral=True
+        )
+
+        return
+
+    await interaction.followup.send(
+        "Mensaje del desarrollador enviado correctamente.",
+        ephemeral=True
+    )
 
 
 
