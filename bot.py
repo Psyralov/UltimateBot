@@ -490,7 +490,7 @@ async def crear_canal_voz(
 
         guild.default_role: discord.PermissionOverwrite(
             connect=False,
-            view_channel=False
+            view_channel=True
         )
     }
 
