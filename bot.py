@@ -5,8 +5,10 @@ from discord import app_commands
 import json
 import os
 import time
+import re
 
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 INTENTS = discord.Intents.all()
 
@@ -75,6 +77,36 @@ GENERAL_CHANNEL_ID = config["GENERAL_CHANNEL_ID"]
 DEVTALK_CHANNEL_ID = config["DEVTALK_CHANNEL_ID"]
 BUMP_COOLDOWN_SECONDS = 60 * 60
 bump_cooldowns = {}
+
+
+def es_enlace_mensaje_discord(mensaje: str) -> bool:
+    enlaces = re.findall(r'https?://[^\s<>]+', mensaje)
+
+    for url in enlaces:
+        try:
+            enlace = urlsplit(url)
+            puerto = enlace.port
+        except ValueError:
+            continue
+
+        partes = enlace.path.strip("/").split("/")
+
+        if (
+            enlace.scheme == "https"
+            and enlace.hostname in {
+                "discord.com",
+                "discordapp.com",
+                "canary.discord.com",
+                "ptb.discord.com",
+            }
+            and puerto is None
+            and len(partes) == 4
+            and partes[0] == "channels"
+            and all(parte.isdigit() for parte in partes[1:])
+        ):
+            return True
+
+    return False
 
 
 def guardar_partidas():
@@ -1720,11 +1752,11 @@ async def help_command(
         inline=False
     )
     embed.add_field(
-        name="/bump [mensaje:<texto>] (PLANEADO PARA HOSTS)",
+        name="/bump mensaje:<enlace> (PLANEADO PARA HOSTS)",
         value=(
             "Notifica a los jugadores para que revisen las "
-            "partidas en búsqueda. El mensaje es opcional; "
-            "puedes usarlo para incluir texto personalizado. "
+            "partidas en búsqueda. Debes proporcionar un enlace "
+            "al mensaje de la partida. "
             "Tiene un tiempo de espera de 60 minutos por usuario."
         ),
         inline=False
@@ -2343,12 +2375,26 @@ async def setup(
     description="Notifica a los jugadores de una partida en búsqueda."
 )
 @app_commands.describe(
-    mensaje="Mensaje personalizado para la notificación."
+    mensaje="Enlace al mensaje de la partida."
 )
 async def bump(
     interaction: discord.Interaction,
-    mensaje: str | None = None
+    mensaje: str
 ):
+
+    if not es_enlace_mensaje_discord(mensaje):
+
+        await interaction.response.send_message(
+            "Ups... ¡Para usar /bump, necesitas "
+            "[adjuntar un mensaje](https://media.discordapp.net/attachments/"
+            "1554199273527050270/1558192719199731722/"
+            "qrsp32j.gif?ex=6aca8b8e&is=6ac93a0e&"
+            "hm=30f3141f88c4fbbc58ab982dd88c10a5367b06cfe94d45235c2478922d10e56a&=) "
+            "hacia tu partida!",
+            ephemeral=True
+        )
+
+        return
 
     if interaction.guild is None:
 
@@ -2449,27 +2495,18 @@ async def bump(
             everyone=False
         )
 
-        if mensaje is None:
+        embed = discord.Embed(
+            title="¡Atención!",
+            color=discord.Color.from_str( "#f7ac20"),
+            description=mensaje,
+        )
+        embed.set_footer(text=(f"Notificado por {interaction.user.display_name}"))
 
-            await canal.send(
-                f"El usuario <@{interaction.user.id}> ha usado /bump para avisar que <@&{BUMP_ROLE_ID}>. ¡Échale un vistazo a su partida en <#1527880398837780610> / <#1555600674253701262>!",
-                allowed_mentions=allowed_mentions
-            )
-
-        else:
-
-            embed = discord.Embed(
-                title="¡Atención!",
-                color=discord.Color.from_str( "#f7ac20"),
-                description=mensaje,
-            )
-            embed.set_footer(text=(f"Notificado por {interaction.user.display_name}"))
-
-            await canal.send(
-                content=f"<@&{BUMP_ROLE_ID}>",
-                embed=embed,
-                allowed_mentions=allowed_mentions
-            )
+        await canal.send(
+            content=f"<@&{BUMP_ROLE_ID}>",
+            embed=embed,
+            allowed_mentions=allowed_mentions
+        )
 
     except discord.HTTPException:
 
