@@ -72,6 +72,7 @@ JUGADORES_NECESARIOS = 16
 BUMP_ROLE_ID = config["BUMP_ROLE_ID"]
 BUMP_CHANNEL_ID = config["BUMP_CHANNEL_ID"]
 GENERAL_CHANNEL_ID = config["GENERAL_CHANNEL_ID"]
+DEVTALK_CHANNEL_ID = config["DEVTALK_CHANNEL_ID"]
 BUMP_COOLDOWN_SECONDS = 60 * 60
 bump_cooldowns = {}
 
@@ -2559,6 +2560,40 @@ async def devtalk(
 
         return
 
+    canal2 = interaction.guild.get_channel(
+        DEVTALK_CHANNEL_ID
+    )
+
+    if canal2 is None:
+
+        try:
+
+            canal2 = await interaction.guild.fetch_channel(
+                DEVTALK_CHANNEL_ID
+            )
+
+        except discord.HTTPException:
+
+            await interaction.followup.send(
+                "No pude encontrar el canal general.",
+                ephemeral=True
+            )
+
+            return
+
+    if not isinstance(
+        canal2,
+        (discord.TextChannel, discord.Thread)
+    ):
+
+        await interaction.followup.send(
+            "El canal configurado como general "
+            "no es un canal de texto válido.",
+            ephemeral=True
+        )
+
+        return
+
     try:
 
         embed = discord.Embed(
@@ -2576,6 +2611,9 @@ async def devtalk(
         )
 
         await canal.send(
+            embed=embed
+        )
+        await canal2.send(
             embed=embed
         )
 
