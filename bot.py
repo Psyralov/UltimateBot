@@ -1373,17 +1373,22 @@ async def manejar_entrada_extra(interaction):
         )
         return
 
-    if any(
-        extra["user_id"] == interaction.user.id
-        for extra in partida["extras"]
-    ):
-        await interaction.response.send_message(
-            "Ya estás registrado como extra en esta partida.",
-            ephemeral=True
-        )
-        return
+    extra = next(
+        (
+            extra
+            for extra in partida["extras"]
+            if extra["user_id"] == interaction.user.id
+        ),
+        None
+    )
 
-    partida["extras"].append({"user_id": interaction.user.id})
+    if extra is None:
+        partida["extras"].append({"user_id": interaction.user.id})
+        mensaje = "Te has registrado como extra para esta partida."
+    else:
+        partida["extras"].remove(extra)
+        mensaje = "Has dejado de estar registrado como extra."
+
     guardar_partidas()
 
     await interaction.message.edit(
@@ -1392,7 +1397,7 @@ async def manejar_entrada_extra(interaction):
     )
 
     await interaction.response.send_message(
-        "Te has registrado como extra para esta partida.",
+        mensaje,
         ephemeral=True
     )
 
@@ -1421,36 +1426,24 @@ async def manejar_cancelacion_participacion(interaction):
         None
     )
 
-    if jugador is not None:
-        if interaction.user.id == partida["host_id"]:
-            await interaction.response.send_message(
-                "El anfitrión no puede cancelar su propia participación.",
-                ephemeral=True
-            )
-            return
-
-        partida["jugadores"].remove(jugador)
-        mensaje = "Has cancelado tu participación en la partida."
-    else:
-        extra = next(
-            (
-                extra
-                for extra in partida["extras"]
-                if extra["user_id"] == interaction.user.id
-            ),
-            None
+    if jugador is None:
+        await interaction.response.send_message(
+            "No estás participando como jugador. Para dejar de estar "
+            "registrado como extra, usa el botón para agregarte/eliminarte "
+            "como extra.",
+            ephemeral=True
         )
+        return
 
-        if extra is None:
-            await interaction.response.send_message(
-                "No estás participando ni estás registrado como extra "
-                "en esta partida.",
-                ephemeral=True
-            )
-            return
+    if interaction.user.id == partida["host_id"]:
+        await interaction.response.send_message(
+            "El anfitrión no puede cancelar su propia participación.",
+            ephemeral=True
+        )
+        return
 
-        partida["extras"].remove(extra)
-        mensaje = "Has dejado de estar registrado como extra."
+    partida["jugadores"].remove(jugador)
+    mensaje = "Has cancelado tu participación en la partida."
 
     guardar_partidas()
 
@@ -1650,7 +1643,7 @@ class PartidaView(
         )
 
     @discord.ui.button(
-        label="Entrar como extra",
+        label="Agregarte/Eliminarte como extra",
         style=discord.ButtonStyle.secondary,
         custom_id="partida_extra"
     )
@@ -1663,9 +1656,9 @@ class PartidaView(
         await manejar_entrada_extra(interaction)
 
     @discord.ui.button(
-    label="Cancelar participación",
-    style=discord.ButtonStyle.danger,
-    custom_id="partida_cancelar"
+        label="Cancelar participación",
+        style=discord.ButtonStyle.danger,
+        custom_id="partida_cancelar"
     )
     async def cancelar(
         self,
@@ -1700,7 +1693,7 @@ class PartidaFinalizadaView(
         )
 
     @discord.ui.button(
-        label="Entrar como extra",
+        label="Agregarte/Eliminarte como extra",
         style=discord.ButtonStyle.secondary,
         custom_id="partida_extra"
     )
@@ -1711,19 +1704,6 @@ class PartidaFinalizadaView(
     ):
 
         await manejar_entrada_extra(interaction)
-
-    @discord.ui.button(
-        label="Cancelar participación",
-        style=discord.ButtonStyle.danger,
-        custom_id="partida_cancelar"
-    )
-    async def cancelar(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button
-    ):
-
-        await manejar_cancelacion_participacion(interaction)
 
     @discord.ui.button(
         label="Partida finalizada",
@@ -1905,10 +1885,10 @@ async def help_command(
         value=(
             "En el canal de partidas, usa **Crear partida** y "
             "completa el formulario. En una publicación de "
-            "partida, **Participar** te une, **Entrar como extra** "
-            "te registra como suplente incluso durante la partida, "
-            "hasta que finalice, y **Cancelar participación** te quita "
-            "de la lista sin importar cómo te hayas registrado."
+            "partida, **Participar** te une como jugador. **Agregarte/"
+            "Eliminarte como extra** alterna tu registro como suplente, "
+            "incluso durante la partida, hasta que finalice. "
+            "**Cancelar participación** te quita de la lista de jugadores."
         ),
         inline=False
     )
