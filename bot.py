@@ -70,7 +70,7 @@ IMAGEN_PARTIDA = (
     "fa0ffcc09e634f4ce9550198&=&format=webp"
 )
 
-JUGADORES_NECESARIOS = 2
+JUGADORES_NECESARIOS = 16
 BUMP_ROLE_ID = config["BUMP_ROLE_ID"]
 BUMP_CHANNEL_ID = config["BUMP_CHANNEL_ID"]
 GENERAL_CHANNEL_ID = config["GENERAL_CHANNEL_ID"]
@@ -1059,6 +1059,11 @@ class ParticiparModal(
         )
         #Comprobación de jugadores. Si hay 16, comienza.
         if len(jugadores) == JUGADORES_NECESARIOS:
+            await interaction.response.send_message(
+                "Te has unido correctamente "
+                "a la partida.",
+                ephemeral=True
+            )
 
             await finalizar_organizacion(
                 interaction.guild,
