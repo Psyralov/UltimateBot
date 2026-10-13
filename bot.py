@@ -588,14 +588,12 @@ def obtener_canal_partida(partida):
 
 
 async def crear_thread(
-    canal,
+    mensaje,
     nombre
 ):
 
-    thread = await canal.create_thread(
-        name=nombre,
-        type=discord.ChannelType.public_thread,
-        invitable=False
+    thread = await mensaje.create_thread(
+        name=nombre
     )
 
     return thread
@@ -903,7 +901,7 @@ class CrearPartidaModal(
         )
 
         thread = await crear_thread(
-            canal2,
+            mensaje,
             f"Partida - {interaction.user.display_name}"
         )
 
@@ -922,38 +920,39 @@ class CrearPartidaModal(
 
         guardar_partidas()
 
-        bump_channel = interaction.guild.get_channel(
-            BUMP_CHANNEL_ID
+        general_channel = interaction.guild.get_channel(
+            GENERAL_CHANNEL_ID
         )
 
-        if bump_channel is None:
+        if general_channel is None:
 
             try:
 
-                bump_channel = await interaction.guild.fetch_channel(
-                    BUMP_CHANNEL_ID
+                general_channel = await interaction.guild.fetch_channel(
+                    GENERAL_CHANNEL_ID
                 )
 
             except discord.HTTPException:
 
-                bump_channel = None
+                general_channel = None
 
         if isinstance(
-            bump_channel,
+            general_channel,
             (discord.TextChannel, discord.Thread)
         ):
 
             try:
 
-                await bump_channel.send(
-                    f"¡Se ha iniciado una [nueva partida]({mensaje.jump_url})! Ve al canal <#{canal2_id}> para unirte."
+                await general_channel.send(
+                    "¿Sed de matanza? ¡Se acaba de publicar una nueva partida en la que puedes satisfacerla!\n"
+                    f"Dirigete al canal <#{canal2_id}> para unirte."
                 )
 
             except discord.HTTPException:
 
                 await interaction.response.send_message(
                     "Tu partida fue creada correctamente, pero no pude "
-                    "publicar el aviso en el canal BUMP. "
+                    "publicar el aviso en el canal general. "
                     f"[Ver partida]({mensaje.jump_url})",
                     ephemeral=True
                 )
@@ -964,7 +963,7 @@ class CrearPartidaModal(
 
             await interaction.response.send_message(
                 "Tu partida fue creada correctamente, pero no pude "
-                "encontrar un canal BUMP válido. "
+                "encontrar un canal general válido. "
                 f"[Ver partida]({mensaje.jump_url})",
                 ephemeral=True
             )
@@ -1248,7 +1247,7 @@ async def convertir_partida_a_canal_3(
     )
 
     thread_nuevo = await crear_thread(
-        canal3,
+        mensaje_nuevo,
         f"Ingame - {partida['host_name']}"
     )
 
@@ -1580,7 +1579,7 @@ async def cancelar_partida(interaction):
     guardar_partidas()
 
     await interaction.followup.send(
-        "La partida se canceló y se eliminó sin archivarla.",
+        "La partida fue cancelada exitosamente.",
         ephemeral=True
     )
 
