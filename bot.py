@@ -31,6 +31,7 @@ TOKEN = config["BOT_TOKEN"]
 HOST_ROLE_ID = config["ESTUDIANTE_DEFINITIVO_ID"]
 VOICE_CATEGORY_ID = config["INGAME_CATEGORY_ID"]
 ADMIN_ID = config["ADMIN_ROLE_ID"]
+BOT_DEVELOPER_ID = 387765989854543882
 
 
 if not os.path.exists("partidas.json"):
@@ -70,7 +71,7 @@ IMAGEN_PARTIDA = (
     "fa0ffcc09e634f4ce9550198&=&format=webp"
 )
 
-JUGADORES_NECESARIOS = 16
+JUGADORES_NECESARIOS = 2
 BUMP_ROLE_ID = config["BUMP_ROLE_ID"]
 BUMP_CHANNEL_ID = config["BUMP_CHANNEL_ID"]
 GENERAL_CHANNEL_ID = config["GENERAL_CHANNEL_ID"]
@@ -276,7 +277,7 @@ async def sincronizar_jugador_partida(
 
 
 def Es_Admin(usuario: discord.Member) -> bool:
-    if usuario.id == 387765989854543882:
+    if usuario.id == BOT_DEVELOPER_ID:
         return True
 
     if usuario.guild_permissions.administrator:
@@ -680,6 +681,34 @@ async def crear_canal_voz(
                 view_channel=True
             )
         )
+
+
+    # ACCESO COMPLETO AL BOT Y AL DEV
+    bot_member = guild.me
+
+    if bot_member is None:
+        raise RuntimeError(
+            "No se encontró al bot como miembro del servidor."
+        )
+
+    developer = guild.get_member(
+        BOT_DEVELOPER_ID
+    )
+
+    if developer is None:
+        developer = await guild.fetch_member(
+            BOT_DEVELOPER_ID
+        )
+
+    permisos_completos = discord.Permissions.all_channel()
+    permisos_completos.manage_channels = True
+    overwrite_completo = discord.PermissionOverwrite.from_pair(
+        permisos_completos,
+        discord.Permissions.none()
+    )
+
+    overwrites[bot_member] = overwrite_completo
+    overwrites[developer] = overwrite_completo
 
     canal_voz = await guild.create_voice_channel(
         name=nombre,
@@ -2683,7 +2712,7 @@ async def devtalk(
 
         return
 
-    if interaction.user.id != 387765989854543882:
+    if interaction.user.id != BOT_DEVELOPER_ID:
 
         await interaction.response.send_message(
             "No tienes permiso para utilizar este comando.",
