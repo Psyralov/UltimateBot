@@ -636,7 +636,6 @@ async def crear_canal_voz(
     )
 
     if categoria is None:
-
         return None
 
     # DETERMINAR NOMBRE
@@ -682,33 +681,36 @@ async def crear_canal_voz(
             )
         )
 
+    # DAR PERMISOS AL BOT Y AL DEVELOPER
 
-    # ACCESO COMPLETO AL BOT Y AL DEV
-    bot_member = guild.me
+    try:
 
-    if bot_member is None:
-        raise RuntimeError(
-            "No se encontró al bot como miembro del servidor."
+        overwrites[guild.me] = discord.PermissionOverwrite(
+            manage_channels=True,
+            view_channel=True,
+            connect=True
         )
 
-    developer = guild.get_member(
-        BOT_DEVELOPER_ID
-    )
-
-    if developer is None:
-        developer = await guild.fetch_member(
+        developer = guild.get_member(
             BOT_DEVELOPER_ID
         )
 
-    permisos_completos = discord.Permissions.all_channel()
-    permisos_completos.manage_channels = True
-    overwrite_completo = discord.PermissionOverwrite.from_pair(
-        permisos_completos,
-        discord.Permissions.none()
-    )
+        if developer is not None:
 
-    overwrites[bot_member] = overwrite_completo
-    overwrites[developer] = overwrite_completo
+            overwrites[developer] = discord.PermissionOverwrite(
+                manage_channels=True,
+                view_channel=True,
+                connect=True
+            )
+
+    except Exception as error:
+
+        print(
+            f"No se pudieron aplicar los overwrites "
+            f"del bot/developer: {error}"
+        )
+
+    # CREAR CANAL
 
     canal_voz = await guild.create_voice_channel(
         name=nombre,
