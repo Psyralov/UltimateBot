@@ -829,7 +829,7 @@ class CrearPartidaModal(
 
                 except (ValueError, IndexError):
 
-                    await interaction.response.send_message(
+                    await interaction.followup.send(
                         "El timestamp de Discord no es válido.\n\n"
                         "Ejemplo válido:\n"
                         "`<t:1790899020:d>`",
@@ -857,7 +857,7 @@ class CrearPartidaModal(
 
                 except ValueError:
 
-                    await interaction.response.send_message(
+                    await interaction.followup.send(
                         "La fecha y hora no tienen "
                         "un formato válido.\n\n"
                         "Puedes utilizar cualquiera "
@@ -865,7 +865,8 @@ class CrearPartidaModal(
                         "`DD/MM/YYYY HH:MM`\n"
                         "Ejemplo: `05/10/2026 21:30`\n\n"
                         "O un timestamp de Discord:\n"
-                        "`<t:1790899020:d>`",
+                        "`<t:1790899020:d>`\n\n"
+                        "RECUERDA QUE SI QUIERES QUE SEA UNA PARTIDA QUICK PLAY, DEBES DEJAR EL CAMPO **COMPLETAMENTE VACÍO**.",
                         ephemeral=True
                     )
 
@@ -879,7 +880,7 @@ class CrearPartidaModal(
 
         if canal2 is None:
 
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "No pude encontrar el canal "
                 "de búsqueda de partidas.",
                 ephemeral=True
@@ -1615,6 +1616,112 @@ async def cancelar_partida(interaction):
     )
 
 
+async def ejecutar_bump(
+    interaction: discord.Interaction,
+    mensaje: str
+):
+
+    ahora = time.monotonic()
+    ultimo_bump = bump_cooldowns.get(interaction.user.id)
+
+    if ultimo_bump is not None:
+
+        restante = BUMP_COOLDOWN_SECONDS - (
+            ahora - ultimo_bump
+        )
+
+        if restante > 0:
+
+            segundos = int(restante) + 1
+            minutos, segundos = divmod(segundos, 60)
+
+            await interaction.followup.send(
+                "Debes esperar "
+                f"**{minutos} min {segundos} s** "
+                "antes de volver a usar `/bump`.",
+                ephemeral=True
+            )
+
+            return
+
+    canal = interaction.guild.get_channel(
+        BUMP_CHANNEL_ID
+    )
+
+    if canal is None:
+
+        try:
+
+            canal = await interaction.guild.fetch_channel(
+                BUMP_CHANNEL_ID
+            )
+
+        except discord.HTTPException:
+
+            await interaction.followup.send(
+                "No pude encontrar el canal donde se envían "
+                "las notificaciones.",
+                ephemeral=True
+            )
+
+            return
+
+    if not isinstance(
+        canal,
+        (discord.TextChannel, discord.Thread)
+    ):
+
+        await interaction.followup.send(
+            "El canal configurado para las notificaciones "
+            "no es un canal de texto válido.",
+            ephemeral=True
+        )
+
+        return
+
+    bump_cooldowns[interaction.user.id] = ahora
+
+    try:
+
+        allowed_mentions = discord.AllowedMentions(
+            roles=[discord.Object(id=BUMP_ROLE_ID)],
+            users=False,
+            everyone=False
+        )
+
+        embed = discord.Embed(
+            title="¡Atención!",
+            color=discord.Color.from_str( "#f7ac20"),
+            description=mensaje,
+        )
+        embed.set_footer(text=(f"Notificado por {interaction.user.display_name}"))
+
+        await canal.send(
+            content=f"<@&{BUMP_ROLE_ID}>",
+            embed=embed,
+            allowed_mentions=allowed_mentions
+        )
+
+    except discord.HTTPException:
+
+        if bump_cooldowns.get(interaction.user.id) == ahora:
+            del bump_cooldowns[interaction.user.id]
+
+        await interaction.followup.send(
+            "No pude enviar la notificación. "
+            "Comprueba que tengo permisos en ese canal.",
+            ephemeral=True
+        )
+
+        return
+
+    await interaction.followup.send(
+        "Notificación enviada correctamente.",
+        ephemeral=True
+    )
+        
+
+
 class PartidaView(
     discord.ui.View
 ):
@@ -1844,6 +1951,76 @@ class PartidaFinalizadaView(
         partida["estado"] = "finalizada"
 
         guardar_partidas()
+
+
+
+class BumpConfirmView(discord.ui.View):
+
+    def __init__(self, mensaje: str, usuario_id: int):
+        super().__init__(timeout=60)
+
+        self.mensaje = mensaje
+        self.usuario_id = usuario_id
+
+    async def interaction_check(
+        self,
+        interaction: discord.Interaction
+    ) -> bool:
+
+        if interaction.user.id != self.usuario_id:
+
+            await interaction.response.send_message(
+                "Solo quien ejecutó `/bump` puede "
+                "responder a esta confirmación.",
+                ephemeral=True
+            )
+
+            return False
+
+        return True
+
+    @discord.ui.button(
+        label="Sí",
+        emoji="✅",
+        style=discord.ButtonStyle.success
+    )
+    async def confirmar(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        await interaction.response.edit_message(
+            content="Confirmado...",
+            view=None
+        )
+
+        await ejecutar_bump(
+            interaction,
+            self.mensaje
+        )
+
+    @discord.ui.button(
+        label="No",
+        emoji="❌",
+        style=discord.ButtonStyle.danger
+    )
+    async def cancelar(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        await interaction.response.edit_message(
+            content=(
+                "Utilizar el comando sin ser anfitrión "
+                "podría conllevar un castigo.\n\n"
+                "Pídele al anfitrión de tu partida que "
+                "utilice el /bump."
+            ),
+            view=None
+        )
+
 
 
 
@@ -2587,106 +2764,13 @@ async def bump(
 #
 #        return
 
-    ahora = time.monotonic()
-    ultimo_bump = bump_cooldowns.get(interaction.user.id)
-
-    if ultimo_bump is not None:
-
-        restante = BUMP_COOLDOWN_SECONDS - (
-            ahora - ultimo_bump
-        )
-
-        if restante > 0:
-
-            segundos = int(restante) + 1
-            minutos, segundos = divmod(segundos, 60)
-
-            await interaction.response.send_message(
-                "Debes esperar "
-                f"**{minutos} min {segundos} s** "
-                "antes de volver a usar `/bump`.",
-                ephemeral=True
-            )
-
-            return
-
-    await interaction.response.defer(
-        ephemeral=True
-    )
-
-    canal = interaction.guild.get_channel(
-        BUMP_CHANNEL_ID
-    )
-
-    if canal is None:
-
-        try:
-
-            canal = await interaction.guild.fetch_channel(
-                BUMP_CHANNEL_ID
-            )
-
-        except discord.HTTPException:
-
-            await interaction.followup.send(
-                "No pude encontrar el canal donde se envían "
-                "las notificaciones.",
-                ephemeral=True
-            )
-
-            return
-
-    if not isinstance(
-        canal,
-        (discord.TextChannel, discord.Thread)
-    ):
-
-        await interaction.followup.send(
-            "El canal configurado para las notificaciones "
-            "no es un canal de texto válido.",
-            ephemeral=True
-        )
-
-        return
-
-    bump_cooldowns[interaction.user.id] = ahora
-
-    try:
-
-        allowed_mentions = discord.AllowedMentions(
-            roles=[discord.Object(id=BUMP_ROLE_ID)],
-            users=False,
-            everyone=False
-        )
-
-        embed = discord.Embed(
-            title="¡Atención!",
-            color=discord.Color.from_str( "#f7ac20"),
-            description=mensaje,
-        )
-        embed.set_footer(text=(f"Notificado por {interaction.user.display_name}"))
-
-        await canal.send(
-            content=f"<@&{BUMP_ROLE_ID}>",
-            embed=embed,
-            allowed_mentions=allowed_mentions
-        )
-
-    except discord.HTTPException:
-
-        if bump_cooldowns.get(interaction.user.id) == ahora:
-            del bump_cooldowns[interaction.user.id]
-
-        await interaction.followup.send(
-            "No pude enviar la notificación. "
-            "Comprueba que tengo permisos en ese canal.",
-            ephemeral=True
-        )
-
-        return
-
-    await interaction.followup.send(
-        "Notificación enviada correctamente.",
+        # Solicitar confirmación antes de ejecutar el bump
+    await interaction.response.send_message(
+        "¿Eres el anfitrión de esta partida?",
+        view=BumpConfirmView(
+            mensaje=mensaje,
+            usuario_id=interaction.user.id
+        ),
         ephemeral=True
     )
 
