@@ -78,6 +78,8 @@ GENERAL_CHANNEL_ID = config["GENERAL_CHANNEL_ID"]
 DEVTALK_CHANNEL_ID = config["DEVTALK_CHANNEL_ID"]
 BUMP_COOLDOWN_SECONDS = 60 * 60
 bump_cooldowns = {}
+createMatch_cooldowns = {} #TODO: penalizacion para crear partidas
+joinMatch_cooldowns = {} #TODO: penalizacion para unirse a partidas
 
 
 def es_enlace_mensaje_discord(mensaje: str) -> bool:
@@ -1618,7 +1620,8 @@ async def cancelar_partida(interaction):
 
 async def ejecutar_bump(
     interaction: discord.Interaction,
-    mensaje: str
+    mensaje: str,
+    ping: bool = True
 ):
 
     ahora = time.monotonic()
@@ -1697,7 +1700,7 @@ async def ejecutar_bump(
         embed.set_footer(text=(f"Notificado por {interaction.user.display_name}"))
 
         await canal.send(
-            content=f"<@&{BUMP_ROLE_ID}>",
+            content=f"<@&{BUMP_ROLE_ID}>" if ping == True else "",
             embed=embed,
             allowed_mentions=allowed_mentions
         )
@@ -1956,11 +1959,12 @@ class PartidaFinalizadaView(
 
 class BumpConfirmView(discord.ui.View):
 
-    def __init__(self, mensaje: str, usuario_id: int):
+    def __init__(self, mensaje: str, usuario_id: int, ping:bool):
         super().__init__(timeout=60)
 
         self.mensaje = mensaje
         self.usuario_id = usuario_id
+        self.ping = ping
 
     async def interaction_check(
         self,
@@ -1997,7 +2001,8 @@ class BumpConfirmView(discord.ui.View):
 
         await ejecutar_bump(
             interaction,
-            self.mensaje
+            self.mensaje,
+            self.ping
         )
 
     @discord.ui.button(
@@ -2418,16 +2423,17 @@ async def eliminar(
     )
 
 
+
 @client.tree.command(
     name="enlistar",
     description="Añade un jugador a la lista tu partida.(HOST)"
 )
 @app_commands.describe(
-    jugador="ID, nombre de usuario, nombre visible o mención"
+    jugador="Jugador que deseas añadir"
 )
 async def enlistar(
     interaction: discord.Interaction,
-    jugador: str
+    jugador: discord.Member = None
 ):
 
     if interaction.guild is None:
@@ -2447,7 +2453,7 @@ async def enlistar(
         )
         return
 
-    if interaction.user.id != partida["host_id"]:
+    if interaction.user.id != partida["host_id"] and not Es_Admin(interaction.user):
         await interaction.response.send_message(
             "Solo el anfitrión de esta partida puede utilizar "
             "este comando.",
@@ -2462,14 +2468,7 @@ async def enlistar(
         )
         return
 
-    usuario, error = await resolver_jugador(
-        interaction.guild,
-        jugador
-    )
-
-    if error is not None:
-        await interaction.response.send_message(error, ephemeral=True)
-        return
+    usuario = jugador or interaction.user
 
     if any(
         participante["user_id"] == usuario.id
@@ -2488,6 +2487,7 @@ async def enlistar(
         for extra in partida["extras"]
         if extra["user_id"] != usuario.id
     ]
+
     partida["jugadores"].append(
         {
             "user_id": usuario.id,
@@ -2503,6 +2503,7 @@ async def enlistar(
         usuario,
         agregar=True
     )
+
     respuesta = f"{usuario.mention} ha sido añadido a la partida."
 
     if errores:
@@ -2518,16 +2519,18 @@ async def enlistar(
         await finalizar_organizacion(interaction.guild, partida)
 
 
+
+
 @client.tree.command(
     name="desenlistar",
     description="Quita un jugador de la lista de tu partida.(HOST)"
 )
 @app_commands.describe(
-    jugador="ID, nombre de usuario, nombre visible o mención"
+    jugador="Jugador que deseas quitar"
 )
 async def desenlistar(
     interaction: discord.Interaction,
-    jugador: str
+    jugador: discord.Member = None
 ):
 
     if interaction.guild is None:
@@ -2547,7 +2550,7 @@ async def desenlistar(
         )
         return
 
-    if interaction.user.id != partida["host_id"]:
+    if interaction.user.id != partida["host_id"] and not Es_Admin(interaction.user):
         await interaction.response.send_message(
             "Solo el anfitrión de esta partida puede utilizar "
             "este comando.",
@@ -2555,14 +2558,7 @@ async def desenlistar(
         )
         return
 
-    usuario, error = await resolver_jugador(
-        interaction.guild,
-        jugador
-    )
-
-    if error is not None:
-        await interaction.response.send_message(error, ephemeral=True)
-        return
+    usuario = jugador or interaction.user
 
     if usuario.id == partida["host_id"]:
         await interaction.response.send_message(
@@ -2607,6 +2603,7 @@ async def desenlistar(
         )
 
     await interaction.followup.send(respuesta, ephemeral=True)
+
 
 
 @client.tree.command(
@@ -2716,11 +2713,13 @@ async def setup(
     description="Notifica a los jugadores de una partida en búsqueda."
 )
 @app_commands.describe(
-    mensaje="Enlace al mensaje de la partida."
+    mensaje="Enlace al mensaje de la partida.",
+    ping="¿Quieres que el comando haga ping?"
 )
 async def bump(
     interaction: discord.Interaction,
-    mensaje: str
+    mensaje: str,
+    ping: bool = True
 ):
 
     if not es_enlace_mensaje_discord(mensaje):
@@ -2769,7 +2768,8 @@ async def bump(
         "¿Eres el anfitrión de esta partida?",
         view=BumpConfirmView(
             mensaje=mensaje,
-            usuario_id=interaction.user.id
+            usuario_id=interaction.user.id,
+            ping=ping
         ),
         ephemeral=True
     )
